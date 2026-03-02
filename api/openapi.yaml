@@ -1,0 +1,302 @@
+openapi: 3.0.3
+info:
+  title: EventDB Core Integrity API
+  version: 0.2.0
+  description: |
+    Minimal API for EventDB Core integrity operations.
+
+    Namespace is a ledger boundary.
+    Clients MUST choose `namespace_id` on every request path.
+    Single-tenant deployments SHOULD use `namespace_id = "default"`.
+servers:
+  - url: /
+paths:
+  /v1/namespaces/{namespace_id}/events:
+    post:
+      summary: Append Event to chain within namespace boundary
+      parameters:
+        - $ref: '#/components/parameters/NamespaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventAppendRequest'
+      responses:
+        '201':
+          description: Event appended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventAppendResponse'
+
+  /v1/namespaces/{namespace_id}/events/{event_id}:
+    get:
+      summary: Get Event by identifier within namespace boundary
+      parameters:
+        - $ref: '#/components/parameters/NamespaceId'
+        - $ref: '#/components/parameters/EventId'
+      responses:
+        '200':
+          description: Event envelope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventRecord'
+
+  /v1/namespaces/{namespace_id}/chains/{chain_id}/head:
+    get:
+      summary: Get head state of a chain within namespace boundary
+      parameters:
+        - $ref: '#/components/parameters/NamespaceId'
+        - $ref: '#/components/parameters/ChainId'
+      responses:
+        '200':
+          description: Chain head
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChainHeadResponse'
+
+  /v1/namespaces/{namespace_id}/chains/{chain_id}/seal:
+    post:
+      summary: Create Seal for a chain window within namespace boundary
+      parameters:
+        - $ref: '#/components/parameters/NamespaceId'
+        - $ref: '#/components/parameters/ChainId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SealRequest'
+      responses:
+        '200':
+          description: Seal result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SealResponse'
+
+  /v1/namespaces/{namespace_id}/verify/chain:
+    post:
+      summary: Verify chain integrity within namespace boundary
+      parameters:
+        - $ref: '#/components/parameters/NamespaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChainVerifyRequest'
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyResult'
+
+  /v1/namespaces/{namespace_id}/anchors:
+    post:
+      summary: Publish optional anchor commitment for namespace chain checkpoint
+      parameters:
+        - $ref: '#/components/parameters/NamespaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnchorRequest'
+      responses:
+        '200':
+          description: Anchor publication result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnchorResponse'
+
+components:
+  parameters:
+    NamespaceId:
+      in: path
+      name: namespace_id
+      required: true
+      schema:
+        type: string
+      description: Ledger namespace identifier.
+    ChainId:
+      in: path
+      name: chain_id
+      required: true
+      schema:
+        type: string
+    EventId:
+      in: path
+      name: event_id
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    EventAppendRequest:
+      type: object
+      required:
+        - chain_id
+        - payload
+        - signature
+      properties:
+        chain_id:
+          type: string
+        payload:
+          description: Opaque event payload. Integrity layer does not interpret content.
+          nullable: true
+          oneOf:
+            - type: object
+            - type: array
+            - type: string
+            - type: number
+            - type: boolean
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Optional metadata. `namespace_id` MAY be included.
+        signature:
+          type: string
+        prev_hash:
+          type: string
+          description: Optional for append request. Required by chain continuity policy.
+
+    EventAppendResponse:
+      type: object
+      required:
+        - event_id
+        - event_hash
+        - chain_head_hash
+      properties:
+        event_id:
+          type: string
+        event_hash:
+          type: string
+        chain_head_hash:
+          type: string
+
+    EventRecord:
+      type: object
+      required:
+        - event_id
+        - chain_id
+        - payload
+      properties:
+        event_id:
+          type: string
+        chain_id:
+          type: string
+        payload:
+          nullable: true
+          oneOf:
+            - type: object
+            - type: array
+            - type: string
+            - type: number
+            - type: boolean
+        metadata:
+          type: object
+          additionalProperties: true
+        signature:
+          type: string
+        prev_hash:
+          type: string
+
+    ChainHeadResponse:
+      type: object
+      required:
+        - chain_id
+        - head_event_id
+        - head_hash
+        - head_sequence
+      properties:
+        chain_id:
+          type: string
+        head_event_id:
+          type: string
+        head_hash:
+          type: string
+        head_sequence:
+          type: integer
+          format: int64
+
+    SealRequest:
+      type: object
+      required:
+        - window_id
+      properties:
+        window_id:
+          type: string
+
+    SealResponse:
+      type: object
+      required:
+        - seal_hash
+        - window_hash
+      properties:
+        seal_hash:
+          type: string
+        window_hash:
+          type: string
+
+    ChainVerifyRequest:
+      type: object
+      required:
+        - chain_id
+      properties:
+        chain_id:
+          type: string
+        scope:
+          type: object
+          properties:
+            sequence_from:
+              type: integer
+              format: int64
+            sequence_to:
+              type: integer
+              format: int64
+
+    VerifyResult:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [PASS, FAIL]
+        error_code:
+          type: string
+        message:
+          type: string
+
+    AnchorRequest:
+      type: object
+      required:
+        - chain_id
+        - checkpoint_ref
+        - commitment_hash
+      properties:
+        chain_id:
+          type: string
+        checkpoint_ref:
+          type: string
+        commitment_hash:
+          type: string
+
+    AnchorResponse:
+      type: object
+      required:
+        - anchor_ref
+        - status
+      properties:
+        anchor_ref:
+          type: string
+        status:
+          type: string
+          enum: [ACCEPTED, REJECTED]
