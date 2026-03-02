@@ -4,7 +4,9 @@ import { config } from './config.js';
 import { hashCanonicalObject } from './crypto.js';
 import { requireApiRole } from './auth.js';
 import { buildSeal, buildSnapshot } from './builders.js';
+import { queryOrdersReadModel, runOrdersProjection } from './projections.js';
 import { auditLogMiddleware, rateLimitByRole } from './security.js';
+import { executeSqlWrite } from './sql-write-adapter.js';
 import { verifyAnchor, verifyChain, verifySeals, verifySnapshot } from './verification.js';
 
 const app = express();
@@ -44,8 +46,12 @@ app.post('/v1/snapshots/:chainId/verify', rateLimitByRole('verify'), requireApiR
 
 app.post('/v1/anchors/:chainId/verify', rateLimitByRole('verify'), requireApiRole('verify'), async (req, res) => {
   const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
-  const result = await verifyAnchor({ namespaceId, chainId: req.params.chainId });
-  res.status(422).json(result);
+  const result = await verifyAnchor({
+    namespaceId,
+    chainId: req.params.chainId,
+    checkpointId: req.body?.checkpoint_id
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
 });
 
 app.post('/v1/seals/:chainId/build', rateLimitByRole('ops'), requireApiRole('ops'), async (req, res) => {
@@ -140,6 +146,41 @@ app.post('/v1/chains/:chainId/events', rateLimitByRole('ingest'), requireApiRole
     sequence: event.sequence,
     event_hash: eventHash
   });
+});
+
+app.post('/v1/projections/:chainId/orders/run', rateLimitByRole('ops'), requireApiRole('ops'), async (req, res) => {
+  const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
+  const result = await runOrdersProjection({
+    namespaceId,
+    chainId: req.params.chainId,
+    uptoSequence: req.body?.upto_sequence
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
+});
+
+app.post('/v1/sql/:chainId/write', rateLimitByRole('ingest'), requireApiRole('ingest'), async (req, res) => {
+  const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
+  const idempotencyKey = req.header('idempotency-key') || req.body?.idempotency_key || '';
+  const actorId = req.body?.actor_id || '';
+  const result = await executeSqlWrite({
+    namespaceId,
+    chainId: req.params.chainId,
+    sql: req.body?.sql,
+    actorId,
+    idempotencyKey
+  });
+  res.status(result.status === 'PASS' ? 201 : 422).json(result);
+});
+
+app.get('/v1/read/orders/:chainId', rateLimitByRole('verify'), requireApiRole('verify'), async (req, res) => {
+  const namespaceId = req.query?.namespace_id || config.defaultNamespaceId;
+  const result = await queryOrdersReadModel({
+    namespaceId,
+    chainId: req.params.chainId,
+    status: req.query?.status || '',
+    limit: req.query?.limit
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
 });
 
 app.use((error, _req, res, _next) => {

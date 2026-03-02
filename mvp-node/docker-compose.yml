@@ -45,6 +45,13 @@ services:
       RATE_LIMIT_MAX_OPS: "60"
       RATE_LIMIT_MAX_VERIFY: "120"
       AUDIT_LOG_ENABLED: "true"
+      ANCHOR_ENABLED: "false"
+      ANCHOR_PROVIDER: evm_read
+      ANCHOR_EVM_RPC_URL: ""
+      ANCHOR_EVM_CONTRACT_ADDRESS: ""
+      ANCHOR_EVM_METHOD_COMMITMENT: getCommitment
+      ANCHOR_EVM_METHOD_TIMESTAMP: getPublishedAt
+      ANCHOR_EVM_CONTRACT_ABI_JSON: ""
     ports:
       - "3000:3000"
 

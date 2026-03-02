@@ -27,6 +27,24 @@ function parseNumber(value, defaultValue) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
 }
 
+function parseJsonArray(value, defaultValue = []) {
+  if (!value) return defaultValue;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : defaultValue;
+  } catch {
+    return defaultValue;
+  }
+}
+
+function parseCsv(value, defaultValue = []) {
+  if (!value) return defaultValue;
+  return String(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 const nodeEnv = process.env.NODE_ENV || 'development';
 
 export const config = {
@@ -53,7 +71,25 @@ export const config = {
     ops: parseNumber(process.env.RATE_LIMIT_MAX_OPS, 60),
     verify: parseNumber(process.env.RATE_LIMIT_MAX_VERIFY, 120)
   },
-  auditLogEnabled: parseBoolean(process.env.AUDIT_LOG_ENABLED, nodeEnv === 'production')
+  auditLogEnabled: parseBoolean(process.env.AUDIT_LOG_ENABLED, nodeEnv === 'production'),
+  anchor: {
+    enabled: parseBoolean(process.env.ANCHOR_ENABLED, false),
+    provider: parseOptionalString(process.env.ANCHOR_PROVIDER || 'evm_read'),
+    evmRpcUrl: parseOptionalString(process.env.ANCHOR_EVM_RPC_URL),
+    evmContractAddress: parseOptionalString(process.env.ANCHOR_EVM_CONTRACT_ADDRESS),
+    evmContractAbi: parseJsonArray(process.env.ANCHOR_EVM_CONTRACT_ABI_JSON, [
+      'function getCommitment(string chainId, string checkpointId) view returns (bytes32)',
+      'function getPublishedAt(string chainId, string checkpointId) view returns (uint256)'
+    ]),
+    evmMethodCommitment: parseOptionalString(process.env.ANCHOR_EVM_METHOD_COMMITMENT || 'getCommitment'),
+    evmMethodTimestamp: parseOptionalString(process.env.ANCHOR_EVM_METHOD_TIMESTAMP || 'getPublishedAt')
+  },
+  sqlWriteAdapter: {
+    enabled: parseBoolean(process.env.SQL_WRITE_ADAPTER_ENABLED, false),
+    allowGenericPatch: parseBoolean(process.env.SQL_WRITE_ALLOW_GENERIC_PATCH, false),
+    allowedEntities: parseCsv(process.env.SQL_WRITE_ALLOWED_ENTITIES, ['orders']),
+    requireIdempotencyKey: parseBoolean(process.env.SQL_WRITE_REQUIRE_IDEMPOTENCY_KEY, true)
+  }
 };
 
 if (!config.databaseUrl) {

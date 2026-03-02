@@ -11,7 +11,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function main() {
-  const schemaPath = path.resolve(__dirname, '../../../05-mvp/schema/postgres.sql');
+  const schemaPath = path.resolve(__dirname, '../../../paper/05-mvp/schema/postgres.sql');
   const sql = await fs.readFile(schemaPath, 'utf8');
 
   try {

@@ -12,6 +12,9 @@ Status: Draft
 - `POST /v1/chains/{chain_id}/events`: append one Event into Chain storage.
 - `POST /v1/seals/{chain_id}/build`: build and persist next Seal window from stored Events.
 - `POST /v1/snapshots/{chain_id}/build`: build and persist Snapshot from verified basis sequence.
+- `POST /v1/projections/{chain_id}/orders/run`: run deterministic projection `orders` v1 into SQL read model.
+- `POST /v1/sql/{chain_id}/write`: optional SQL write adapter (restricted SQL subset to deterministic Event append).
+- `GET /v1/read/orders/{chain_id}`: query SQL read model (`status`, `limit`, `namespace_id` as query params).
 
 ## Response Contract
 
@@ -24,9 +27,10 @@ Each endpoint SHOULD return deterministic verification output:
 For current MVP implementation:
 
 - verification endpoints accept optional body field `namespace_id` (default: `default`);
-- anchor verification endpoint is a stub and returns `ANCHOR_REFERENCE_NOT_FOUND`.
+- anchor verification endpoint supports optional body field `checkpoint_id` (default: latest Seal window).
+- anchor verification supports EVM read adapter configured by env (`ANCHOR_*`).
 - API key auth is supported via `x-api-key` or `Authorization: Bearer <key>`.
 - role mapping:
-  - ingest key: `/v1/chains/{chain_id}/events`
+  - ingest key: `/v1/chains/{chain_id}/events`, `/v1/sql/{chain_id}/write`
   - ops key: `/v1/seals/{chain_id}/build`, `/v1/snapshots/{chain_id}/build`
-  - verify key: all `/verify` endpoints
+  - verify key: all `/verify` endpoints dan query `/v1/read/orders/{chain_id}`

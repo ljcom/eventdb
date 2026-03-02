@@ -16,7 +16,7 @@ function parseJsonl(content) {
 }
 
 async function main() {
-  const sampleDir = path.resolve(__dirname, '../../../05-mvp/sample');
+  const sampleDir = path.resolve(__dirname, '../../../paper/05-mvp/sample');
   const eventsPath = path.join(sampleDir, 'sample-events.jsonl');
   const sealPath = path.join(sampleDir, 'sample-seal.json');
   const snapshotPath = path.join(sampleDir, 'sample-snapshot.json');

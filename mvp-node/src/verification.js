@@ -2,6 +2,7 @@ import { query } from './db.js';
 import { config } from './config.js';
 import { hashCanonicalObject, verifySignature } from './crypto.js';
 import { canonicalJsonString } from './canonical-json.js';
+import { verifyAnchorOnEvm } from './anchor-evm.js';
 
 function fail(errorCode, message, checkedScope = {}) {
   return {
@@ -445,10 +446,67 @@ export async function verifySnapshot({ namespaceId, chainId, snapshotId }) {
   });
 }
 
-export async function verifyAnchor({ namespaceId, chainId }) {
+export async function verifyAnchor({ namespaceId, chainId, checkpointId }) {
   const ns = namespaceId || config.defaultNamespaceId;
-  return fail('ANCHOR_REFERENCE_NOT_FOUND', 'Anchor adapter is not implemented in this MVP', {
-    namespace_id: ns,
-    chain_id: chainId
-  });
+
+  if (!config.anchor.enabled) {
+    return fail('ANCHOR_REFERENCE_NOT_FOUND', 'Anchor adapter is disabled', {
+      namespace_id: ns,
+      chain_id: chainId
+    });
+  }
+
+  const requestedCheckpoint = checkpointId || null;
+  const sealQuery = requestedCheckpoint
+    ? `select window_id, seal_hash
+       from eventdb_seal
+       where namespace_id = $1 and chain_id = $2 and window_id = $3
+       limit 1`
+    : `select window_id, seal_hash
+       from eventdb_seal
+       where namespace_id = $1 and chain_id = $2
+       order by window_end_sequence desc
+       limit 1`;
+  const sealParams = requestedCheckpoint ? [ns, chainId, requestedCheckpoint] : [ns, chainId];
+  const { rows } = await query(sealQuery, sealParams);
+
+  if (rows.length === 0) {
+    return fail('ANCHOR_CONTEXT_INVALID', 'Local seal checkpoint is missing', {
+      namespace_id: ns,
+      chain_id: chainId,
+      checkpoint_id: requestedCheckpoint
+    });
+  }
+
+  const checkpoint = rows[0];
+  const resolvedCheckpointId = checkpoint.window_id;
+  const expectedCommitmentHash = checkpoint.seal_hash;
+
+  try {
+    const external = await verifyAnchorOnEvm({
+      chainId,
+      checkpointId: resolvedCheckpointId,
+      expectedCommitmentHash
+    });
+
+    if (external.status !== 'PASS') {
+      return fail(external.error_code, external.message, {
+        namespace_id: ns,
+        chain_id: chainId,
+        checkpoint_id: resolvedCheckpointId
+      });
+    }
+
+    return pass('Anchor verification passed', {
+      namespace_id: ns,
+      chain_id: chainId,
+      checkpoint_id: resolvedCheckpointId
+    });
+  } catch (error) {
+    return fail('ANCHOR_REFERENCE_NOT_FOUND', error.message, {
+      namespace_id: ns,
+      chain_id: chainId,
+      checkpoint_id: resolvedCheckpointId
+    });
+  }
 }

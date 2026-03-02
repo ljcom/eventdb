@@ -56,17 +56,20 @@ Service akan tersedia di `http://localhost:3000` dengan Postgres internal di `lo
 - `POST /v1/chains/:chainId/verify`
 - `POST /v1/seals/:chainId/verify`
 - `POST /v1/snapshots/:chainId/verify`
-- `POST /v1/anchors/:chainId/verify` (stub, belum implement adapter)
+- `POST /v1/anchors/:chainId/verify` (EVM read adapter, configurable via env)
 - `POST /v1/chains/:chainId/events` (append event sederhana)
 - `POST /v1/seals/:chainId/build` (build Seal dari Event di DB)
 - `POST /v1/snapshots/:chainId/build` (build Snapshot dari basis Event/Seal di DB)
+- `POST /v1/projections/:chainId/orders/run` (run SQL read model projection `orders` v1)
+- `POST /v1/sql/:chainId/write` (optional SQL write adapter -> append event -> run projection)
+- `GET /v1/read/orders/:chainId` (query read model `orders` v1)
 
 ## API Key security
 
 - Semua endpoint non-`/health` bisa diproteksi API key.
 - Header yang diterima: `x-api-key` atau `Authorization: Bearer <key>`.
 - Role:
-  - `API_KEY_INGEST` untuk `/events`
+  - `API_KEY_INGEST` untuk `/events` dan `/sql/.../write`
   - `API_KEY_OPS` untuk `/build`
   - `API_KEY_VERIFY` untuk `/verify`
   - `API_KEY_ADMIN` untuk semua role
@@ -78,6 +81,15 @@ Contoh body verifikasi:
 ```json
 {
   "namespace_id": "default"
+}
+```
+
+Contoh body anchor verify:
+
+```json
+{
+  "namespace_id": "default",
+  "checkpoint_id": "win-1-3-abc123def456"
 }
 ```
 
@@ -110,6 +122,18 @@ curl -X POST http://localhost:3000/v1/chains/inst-a-chain-01/verify \
 - Aktif/nonaktif lewat `AUDIT_LOG_ENABLED`.
 - Field utama: `ts`, `method`, `path`, `status_code`, `duration_ms`, `ip`, `auth_role`, `api_key_fingerprint`.
 
+## Smart contract anchoring
+
+- Endpoint anchor verify membandingkan `seal_hash` lokal (checkpoint window) dengan commitment pada smart contract.
+- Konfigurasi minimal:
+  - `ANCHOR_ENABLED=true`
+  - `ANCHOR_EVM_RPC_URL`
+  - `ANCHOR_EVM_CONTRACT_ADDRESS`
+  - method default:
+    - `getCommitment(string chainId, string checkpointId) returns (bytes32)`
+    - `getPublishedAt(string chainId, string checkpointId) returns (uint256)` (opsional)
+- Jika ABI/method berbeda, set `ANCHOR_EVM_CONTRACT_ABI_JSON` dan nama method via env.
+
 Contoh body append event:
 
 ```json
@@ -125,6 +149,48 @@ Contoh body append event:
   "signature": "sig_base64_evt_0004"
 }
 ```
+
+Contoh run projection:
+
+```bash
+curl -X POST http://localhost:3000/v1/projections/inst-a-chain-01/orders/run \
+  -H 'Content-Type: application/json' \
+  -d '{"namespace_id":"default"}'
+```
+
+Contoh query read model:
+
+```bash
+curl "http://localhost:3000/v1/read/orders/inst-a-chain-01?namespace_id=default&status=final&limit=20"
+```
+
+Contoh SQL write adapter:
+
+```bash
+curl -X POST http://localhost:3000/v1/sql/inst-a-chain-01/write \
+  -H 'Content-Type: application/json' \
+  -H 'idempotency-key: sqlw-001' \
+  -d '{"namespace_id":"default","actor_id":"acct-ops-01","sql":"UPDATE orders SET status='\''PAID'\'' WHERE order_id='\''A-1001'\''"}'
+```
+
+## Projection CLI
+
+Jalankan projector tanpa API:
+
+```bash
+npm run projection:orders -- --chain-id inst-a-chain-01 --namespace-id default
+```
+
+## SQL Write Adapter (Optional)
+
+- Aktifkan dengan `SQL_WRITE_ADAPTER_ENABLED=true`.
+- Endpoint hanya menerima subset:
+  - `INSERT INTO orders (...) VALUES (...)`
+  - `UPDATE orders SET ... WHERE order_id='...'`
+  - `DELETE FROM orders WHERE order_id='...'`
+- Adapter tidak menulis langsung ke read table.
+- Alur: SQL -> event append (`eventdb_event`) -> projection `orders` v1 -> `read.orders_v1`.
+- Idempotency key bisa dikirim via header `idempotency-key` (direkomendasikan/mandatory by config).
 
 ## Catatan signature mode
 
