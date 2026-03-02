@@ -25,3 +25,8 @@ For current MVP implementation:
 
 - verification endpoints accept optional body field `namespace_id` (default: `default`);
 - anchor verification endpoint is a stub and returns `ANCHOR_REFERENCE_NOT_FOUND`.
+- API key auth is supported via `x-api-key` or `Authorization: Bearer <key>`.
+- role mapping:
+  - ingest key: `/v1/chains/{chain_id}/events`
+  - ops key: `/v1/seals/{chain_id}/build`, `/v1/snapshots/{chain_id}/build`
+  - verify key: all `/verify` endpoints

@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: eventdb-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: eventdb_core
+    ports:
+      - "5432:5432"
+    volumes:
+      - eventdb_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d eventdb_core"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: eventdb-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/eventdb_core
+      DB_SSL: "false"
+      DEFAULT_NAMESPACE_ID: default
+      EVENT_GENESIS_PREV_HASH: GENESIS
+      SEAL_GENESIS_PREV_HASH: SEAL_GENESIS
+      SIGNATURE_MODE: none
+      ACCOUNT_SECRETS_JSON: '{}'
+      API_AUTH_ENABLED: "true"
+      API_KEY_INGEST: ingest-local-change-me
+      API_KEY_OPS: ops-local-change-me
+      API_KEY_VERIFY: verify-local-change-me
+      API_KEY_ADMIN: ''
+      RATE_LIMIT_ENABLED: "true"
+      RATE_LIMIT_WINDOW_MS: "60000"
+      RATE_LIMIT_MAX_INGEST: "300"
+      RATE_LIMIT_MAX_OPS: "60"
+      RATE_LIMIT_MAX_VERIFY: "120"
+      AUDIT_LOG_ENABLED: "true"
+    ports:
+      - "3000:3000"
+
+volumes:
+  eventdb_pgdata:

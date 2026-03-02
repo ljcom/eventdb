@@ -4,13 +4,13 @@ MVP service untuk verifikasi `chain`, `seal`, dan `snapshot` sesuai draft spec E
 
 ## Lokasi
 
-- App: `paper/06-implementation/mvp-node`
+- App: `eventdb/mvp-node`
 - Schema DB: `paper/05-mvp/schema/postgres.sql`
 
 ## Setup
 
 ```bash
-cd paper/06-implementation/mvp-node
+cd eventdb/mvp-node
 npm install
 cp .env.example .env
 ```
@@ -41,6 +41,15 @@ npm run sample:load
 npm run dev
 ```
 
+## Docker
+
+```bash
+cd eventdb/mvp-node
+docker compose up --build
+```
+
+Service akan tersedia di `http://localhost:3000` dengan Postgres internal di `localhost:5432`.
+
 ## Endpoint
 
 - `GET /health`
@@ -52,6 +61,18 @@ npm run dev
 - `POST /v1/seals/:chainId/build` (build Seal dari Event di DB)
 - `POST /v1/snapshots/:chainId/build` (build Snapshot dari basis Event/Seal di DB)
 
+## API Key security
+
+- Semua endpoint non-`/health` bisa diproteksi API key.
+- Header yang diterima: `x-api-key` atau `Authorization: Bearer <key>`.
+- Role:
+  - `API_KEY_INGEST` untuk `/events`
+  - `API_KEY_OPS` untuk `/build`
+  - `API_KEY_VERIFY` untuk `/verify`
+  - `API_KEY_ADMIN` untuk semua role
+- Aktifkan dengan `API_AUTH_ENABLED=true`.
+- Default behavior: otomatis aktif jika `NODE_ENV=production`.
+
 Contoh body verifikasi:
 
 ```json
@@ -59,6 +80,35 @@ Contoh body verifikasi:
   "namespace_id": "default"
 }
 ```
+
+Contoh request verify dengan API key:
+
+```bash
+curl -X POST http://localhost:3000/v1/chains/inst-a-chain-01/verify \
+  -H 'Content-Type: application/json' \
+  -H 'x-api-key: verify-local-change-me' \
+  -d '{"namespace_id":"default"}'
+```
+
+## Rate limiting
+
+- Mekanisme: fixed-window in-memory per role (`ingest`, `ops`, `verify`).
+- Konfigurasi env:
+  - `RATE_LIMIT_ENABLED`
+  - `RATE_LIMIT_WINDOW_MS`
+  - `RATE_LIMIT_MAX_INGEST`
+  - `RATE_LIMIT_MAX_OPS`
+  - `RATE_LIMIT_MAX_VERIFY`
+- Saat limit terlewati, API mengembalikan:
+  - HTTP `429`
+  - `error_code=RATE_LIMIT_EXCEEDED`
+  - header `retry-after`
+
+## Audit log
+
+- Audit request non-`/health` ditulis sebagai JSON ke stdout.
+- Aktif/nonaktif lewat `AUDIT_LOG_ENABLED`.
+- Field utama: `ts`, `method`, `path`, `status_code`, `duration_ms`, `ip`, `auth_role`, `api_key_fingerprint`.
 
 Contoh body append event:
 

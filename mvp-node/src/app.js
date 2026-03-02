@@ -2,11 +2,14 @@ import express from 'express';
 import { query } from './db.js';
 import { config } from './config.js';
 import { hashCanonicalObject } from './crypto.js';
+import { requireApiRole } from './auth.js';
 import { buildSeal, buildSnapshot } from './builders.js';
+import { auditLogMiddleware, rateLimitByRole } from './security.js';
 import { verifyAnchor, verifyChain, verifySeals, verifySnapshot } from './verification.js';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
+app.use(auditLogMiddleware);
 
 app.get('/health', async (_req, res) => {
   try {
@@ -17,19 +20,19 @@ app.get('/health', async (_req, res) => {
   }
 });
 
-app.post('/v1/chains/:chainId/verify', async (req, res) => {
+app.post('/v1/chains/:chainId/verify', rateLimitByRole('verify'), requireApiRole('verify'), async (req, res) => {
   const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
   const result = await verifyChain({ namespaceId, chainId: req.params.chainId });
   res.status(result.status === 'PASS' ? 200 : 422).json(result);
 });
 
-app.post('/v1/seals/:chainId/verify', async (req, res) => {
+app.post('/v1/seals/:chainId/verify', rateLimitByRole('verify'), requireApiRole('verify'), async (req, res) => {
   const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
   const result = await verifySeals({ namespaceId, chainId: req.params.chainId });
   res.status(result.status === 'PASS' ? 200 : 422).json(result);
 });
 
-app.post('/v1/snapshots/:chainId/verify', async (req, res) => {
+app.post('/v1/snapshots/:chainId/verify', rateLimitByRole('verify'), requireApiRole('verify'), async (req, res) => {
   const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
   const result = await verifySnapshot({
     namespaceId,
@@ -39,13 +42,13 @@ app.post('/v1/snapshots/:chainId/verify', async (req, res) => {
   res.status(result.status === 'PASS' ? 200 : 422).json(result);
 });
 
-app.post('/v1/anchors/:chainId/verify', async (req, res) => {
+app.post('/v1/anchors/:chainId/verify', rateLimitByRole('verify'), requireApiRole('verify'), async (req, res) => {
   const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
   const result = await verifyAnchor({ namespaceId, chainId: req.params.chainId });
   res.status(422).json(result);
 });
 
-app.post('/v1/seals/:chainId/build', async (req, res) => {
+app.post('/v1/seals/:chainId/build', rateLimitByRole('ops'), requireApiRole('ops'), async (req, res) => {
   const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
   const result = await buildSeal({
     namespaceId,
@@ -58,7 +61,7 @@ app.post('/v1/seals/:chainId/build', async (req, res) => {
   res.status(result.status === 'PASS' ? 201 : 422).json(result);
 });
 
-app.post('/v1/snapshots/:chainId/build', async (req, res) => {
+app.post('/v1/snapshots/:chainId/build', rateLimitByRole('ops'), requireApiRole('ops'), async (req, res) => {
   const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
   const result = await buildSnapshot({
     namespaceId,
@@ -71,7 +74,7 @@ app.post('/v1/snapshots/:chainId/build', async (req, res) => {
   res.status(result.status === 'PASS' ? 201 : 422).json(result);
 });
 
-app.post('/v1/chains/:chainId/events', async (req, res) => {
+app.post('/v1/chains/:chainId/events', rateLimitByRole('ingest'), requireApiRole('ingest'), async (req, res) => {
   const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
   const chainId = req.params.chainId;
 
