@@ -1,3 +1,7 @@
 node_modules
 .env
 npm-debug.log*
+
+# Local custom JSON workspace
+custom-json/*
+!custom-json/.gitkeep
