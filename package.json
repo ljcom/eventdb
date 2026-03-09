@@ -1,0 +1,14 @@
+{
+  "name": "foremoz-eventdb-wrapper",
+  "private": true,
+  "scripts": {
+    "db:schema": "npm --prefix ./mvp-node run db:schema",
+    "dev": "npm --prefix ./mvp-node run dev",
+    "start": "npm --prefix ./mvp-node run start",
+    "check": "npm --prefix ./mvp-node run check",
+    "sample:load": "npm --prefix ./mvp-node run sample:load",
+    "projection:orders": "npm --prefix ./mvp-node run projection:orders",
+    "test:integration": "npm --prefix ./mvp-node run test:integration",
+    "test:api": "npm --prefix ./mvp-node run test:api"
+  }
+}

@@ -10,8 +10,27 @@ const { Client } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+async function resolveSchemaPath() {
+  const candidates = [
+    path.resolve(__dirname, '../schema/postgres.sql'),
+    path.resolve(__dirname, '../../../paper/05-mvp/schema/postgres.sql'),
+    path.resolve(__dirname, '../../../../paper/05-mvp/schema/postgres.sql')
+  ];
+
+  for (const schemaPath of candidates) {
+    try {
+      await fs.access(schemaPath);
+      return schemaPath;
+    } catch {
+      // try next path candidate
+    }
+  }
+
+  throw new Error(`Schema file not found. Checked: ${candidates.join(', ')}`);
+}
+
 async function main() {
-  const schemaPath = path.resolve(__dirname, '../../../paper/05-mvp/schema/postgres.sql');
+  const schemaPath = await resolveSchemaPath();
   const sql = await fs.readFile(schemaPath, 'utf8');
 
   try {
