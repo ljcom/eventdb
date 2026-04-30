@@ -66,9 +66,14 @@ test('integration: event -> seal -> snapshot -> verify -> tamper', async () => {
       chainId,
       sqlChainId
     ]);
+    await pool.query('delete from read.products_v1 where namespace_id = $1 and chain_id in ($2, $3)', [
+      namespaceId,
+      chainId,
+      sqlChainId
+    ]);
     await pool.query(
       `delete from projection_checkpoint
-       where namespace_id = $1 and chain_id in ($2, $3) and projection_name = 'orders' and projection_ver = 1`,
+       where namespace_id = $1 and chain_id in ($2, $3)`,
       [namespaceId, chainId, sqlChainId]
     );
     await pool.query('delete from sql_write_idempotency where namespace_id = $1 and chain_id = $2', [namespaceId, sqlChainId]);
@@ -112,10 +117,67 @@ test('integration: event -> seal -> snapshot -> verify -> tamper', async () => {
 
     await cleanup();
 
+    const invalidEventType = await requestJson(`${baseUrl}/v1/chains/${chainId}/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        namespace_id: namespaceId,
+        event_id: 'evt-invalid-type',
+        account_id: 'acct-ops-01',
+        event_type: 'sales.product.created',
+        event_time: '2026-01-01T00:00:00Z',
+        payload: { productId: 'P-1' },
+        signature: 'sig_invalid_type'
+      })
+    });
+    assert.equal(invalidEventType.status, 422);
+    assert.equal(invalidEventType.payload.error_code, 'EVENT_TYPE_NOT_REGISTERED');
+
+    const invalidPayload = await requestJson(`${baseUrl}/v1/chains/${chainId}/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        namespace_id: namespaceId,
+        event_id: 'evt-invalid-payload',
+        account_id: 'acct-ops-01',
+        event_type: 'master.product.created',
+        event_time: '2026-01-01T00:00:00Z',
+        payload: { productId: 'P-1' },
+        signature: 'sig_invalid_payload'
+      })
+    });
+    assert.equal(invalidPayload.status, 422);
+    assert.equal(invalidPayload.payload.error_code, 'EVENT_PAYLOAD_FIELD_REQUIRED');
+
     const eventSpecs = [
-      { event_id: 'evt-1', event_type: 'record_created', event_time: '2026-01-01T00:00:00Z', payload: { ref: 'X-1', status: 'created' }, account_id: 'acct-ops-01' },
-      { event_id: 'evt-2', event_type: 'record_updated', event_time: '2026-01-01T00:01:00Z', payload: { ref: 'X-1', status: 'validated' }, account_id: 'acct-ops-01' },
-      { event_id: 'evt-3', event_type: 'record_finalized', event_time: '2026-01-01T00:02:00Z', payload: { ref: 'X-1', status: 'final' }, account_id: 'acct-ops-02' }
+      {
+        event_id: 'evt-1',
+        event_type: 'sales.order.created',
+        event_time: '2026-01-01T00:00:00Z',
+        payload: { orderId: 'X-1', customerId: 'C-1', items: [], status: 'created' },
+        account_id: 'acct-ops-01'
+      },
+      {
+        event_id: 'evt-2',
+        event_type: 'sales.order.updated',
+        event_time: '2026-01-01T00:01:00Z',
+        payload: { orderId: 'X-1', status: 'validated' },
+        account_id: 'acct-ops-01'
+      },
+      {
+        event_id: 'evt-3',
+        event_type: 'sales.order.updated',
+        event_time: '2026-01-01T00:02:00Z',
+        payload: { orderId: 'X-1', status: 'final' },
+        account_id: 'acct-ops-02'
+      },
+      {
+        event_id: 'evt-4',
+        event_type: 'master.product.created',
+        event_time: '2026-01-01T00:03:00Z',
+        payload: { productId: 'P-1', name: 'Product 1', sku: 'SKU-1', unit: 'pcs' },
+        account_id: 'acct-ops-02'
+      }
     ];
 
     let prevHash = process.env.EVENT_GENESIS_PREV_HASH || 'GENESIS';
@@ -164,6 +226,24 @@ test('integration: event -> seal -> snapshot -> verify -> tamper', async () => {
     });
     assert.equal(chainVerify.status, 200);
     assert.equal(chainVerify.payload.status, 'PASS');
+
+    const productProjectionRun = await requestJson(`${baseUrl}/v1/projections/${chainId}/products/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ namespace_id: namespaceId })
+    });
+    assert.equal(productProjectionRun.status, 200);
+    assert.equal(productProjectionRun.payload.status, 'PASS');
+    assert.equal(productProjectionRun.payload.artifact.rows_applied, 1);
+
+    const { rows: productRows } = await pool.query(
+      `select product_id, name, sku, unit
+       from read.products_v1
+       where namespace_id = $1 and chain_id = $2 and product_id = $3`,
+      [namespaceId, chainId, 'P-1']
+    );
+    assert.equal(productRows.length, 1);
+    assert.equal(productRows[0].name, 'Product 1');
 
     const projectionRun = await requestJson(`${baseUrl}/v1/projections/${chainId}/orders/run`, {
       method: 'POST',

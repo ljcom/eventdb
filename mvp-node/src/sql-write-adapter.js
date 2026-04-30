@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import { hashCanonicalObject, sha256Hex, signCanonicalObject } from './crypto.js';
 import { withTx } from './db.js';
+import { getEventTypeSpec, validatePayloadForEventType } from './event-types.js';
 import { buildEventSigningObject, normalizeUtcTimestamp } from './verification.js';
 import { runOrdersProjection } from './projections.js';
 
@@ -126,25 +127,30 @@ function mapIntentToEvent(intent) {
   if (intent.op === 'insert') {
     const status = typeof intent.fields.status === 'string' ? intent.fields.status : 'CREATED';
     return {
-      eventType: 'OrderCreated',
-      payload: { ref: intent.key, status }
+      eventType: 'sales.order.created',
+      payload: {
+        orderId: intent.key,
+        customerId: typeof intent.fields.customer_id === 'string' ? intent.fields.customer_id : 'unknown',
+        items: [],
+        status
+      }
     };
   }
 
   if (intent.op === 'delete') {
     return {
-      eventType: 'OrderDeleted',
-      payload: { ref: intent.key, status: 'DELETED' }
+      eventType: 'sales.order.deleted',
+      payload: { orderId: intent.key }
     };
   }
 
   if (intent.op === 'update') {
     const status = typeof intent.fields.status === 'string' ? intent.fields.status : '';
     if (status.toUpperCase() === 'PAID') {
-      return { eventType: 'PaymentConfirmed', payload: { ref: intent.key, status: 'PAID' } };
+      return { eventType: 'sales.order.updated', payload: { orderId: intent.key, status: 'PAID', patch: intent.fields } };
     }
     if (status.toUpperCase() === 'CANCELLED') {
-      return { eventType: 'OrderCancelled', payload: { ref: intent.key, status: 'CANCELLED' } };
+      return { eventType: 'sales.order.cancelled', payload: { orderId: intent.key, status: 'CANCELLED' } };
     }
     if (!status && !config.sqlWriteAdapter.allowGenericPatch) {
       throw new Error('Unrecognized UPDATE assignment. Enable SQL_WRITE_ALLOW_GENERIC_PATCH to allow generic patch events');
@@ -152,8 +158,8 @@ function mapIntentToEvent(intent) {
 
     const normalizedStatus = status || 'UPDATED';
     return {
-      eventType: 'OrderUpdated',
-      payload: { ref: intent.key, status: normalizedStatus, patch: intent.fields }
+      eventType: 'sales.order.updated',
+      payload: { orderId: intent.key, status: normalizedStatus, patch: intent.fields }
     };
   }
 
@@ -227,6 +233,11 @@ async function appendDerivedEventTx({
   const prevHash = last ? hashCanonicalObject(buildEventSigningObject(last)) : config.eventGenesisPrevHash;
   const eventTime = normalizeUtcTimestamp(new Date());
   const eventId = buildEventId({ namespaceId, chainId, idempotencyKey, statementHash });
+  const eventTypeSpec = getEventTypeSpec(eventType);
+  const payloadValidation = validatePayloadForEventType(eventType, payload);
+  if (!payloadValidation.ok || !eventTypeSpec) {
+    throw new Error(payloadValidation.message || `Unregistered event type: ${eventType}`);
+  }
 
   const signingObject = {
     namespace_id: namespaceId,
@@ -253,8 +264,8 @@ async function appendDerivedEventTx({
   await client.query(
     `insert into eventdb_event (
       namespace_id, chain_id, event_id, sequence, prev_hash,
-      account_id, event_type, event_time, payload, signature
-    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      account_id, event_type, domain, entity_type, entity_id, event_time, payload, signature
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
     [
       namespaceId,
       chainId,
@@ -263,6 +274,9 @@ async function appendDerivedEventTx({
       prevHash,
       accountId,
       eventType,
+      eventTypeSpec.domain,
+      eventTypeSpec.entity,
+      payload[`${eventTypeSpec.entity}Id`] || null,
       eventTime,
       signingObject.payload,
       signature

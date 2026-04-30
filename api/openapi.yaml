@@ -8,6 +8,8 @@ info:
     Namespace is a ledger boundary.
     Clients MUST choose `namespace_id` on every request path.
     Single-tenant deployments SHOULD use `namespace_id = "default"`.
+    Event types MUST be registered in `config/event-types.json` and use
+    canonical `domain.entity.action` naming.
 servers:
   - url: /
 paths:
@@ -139,33 +141,112 @@ components:
         type: string
 
   schemas:
-    EventAppendRequest:
+    EventType:
+      type: string
+      enum:
+        - master.product.created
+        - master.product.updated
+        - master.customer.created
+        - master.vendor.created
+        - master.employee.created
+        - master.location.created
+        - master.account.created
+        - sales.order.created
+        - sales.order.updated
+        - sales.order.cancelled
+        - sales.order.deleted
+        - sales.invoice.created
+        - stock.movement.created
+        - finance.bill.created
+        - accounting.journal.posted
+        - hr.payroll.generated
+
+    EventNamespace:
       type: object
       required:
-        - chain_id
-        - payload
-        - signature
+        - accountid
+        - tenantid
       properties:
-        chain_id:
+        accountid:
           type: string
+        tenantid:
+          type: string
+        branchid:
+          type: string
+
+    CanonicalEventEnvelope:
+      type: object
+      required:
+        - eventid
+        - namespace
+        - type
+        - version
+        - actorid
+        - occurred_at
+        - payload
+      properties:
+        eventid:
+          type: string
+        namespace:
+          $ref: '#/components/schemas/EventNamespace'
+        type:
+          $ref: '#/components/schemas/EventType'
+        version:
+          type: integer
+          minimum: 1
+        actorid:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
         payload:
-          description: Opaque event payload. Integrity layer does not interpret content.
-          nullable: true
-          oneOf:
-            - type: object
-            - type: array
-            - type: string
-            - type: number
-            - type: boolean
-        metadata:
           type: object
           additionalProperties: true
-          description: Optional metadata. `namespace_id` MAY be included.
-        signature:
+        hash:
           type: string
+          description: Optional client-supplied canonical event hash. The service rejects mismatches.
         prev_hash:
           type: string
-          description: Optional for append request. Required by chain continuity policy.
+          description: Optional for append requests. The service derives chain head hash when omitted.
+
+    EventAppendRequest:
+      oneOf:
+        - $ref: '#/components/schemas/CanonicalEventEnvelope'
+        - type: object
+          required:
+            - event_id
+            - event_type
+            - event_time
+            - account_id
+            - payload
+            - signature
+          properties:
+            chain_id:
+              type: string
+            event_id:
+              type: string
+            event_type:
+              $ref: '#/components/schemas/EventType'
+            version:
+              type: integer
+              minimum: 1
+            account_id:
+              type: string
+            event_time:
+              type: string
+              format: date-time
+            payload:
+              type: object
+              additionalProperties: true
+            metadata:
+              type: object
+              additionalProperties: true
+              description: Optional metadata. `namespace_id` MAY be included.
+            signature:
+              type: string
+            prev_hash:
+              type: string
+              description: Optional for append request. The service derives chain head hash when omitted.
 
     EventAppendResponse:
       type: object

@@ -4,10 +4,24 @@ import { config } from './config.js';
 import { hashCanonicalObject } from './crypto.js';
 import { requireApiRole } from './auth.js';
 import { buildSeal, buildSnapshot } from './builders.js';
-import { queryOrdersReadModel, runOrdersProjection } from './projections.js';
+import { getEventTypeSpec, validatePayloadForEventType } from './event-types.js';
+import {
+  queryCrmCustomersReadModel,
+  queryMarketOrdersReadModel,
+  queryOrdersReadModel,
+  queryPosSalesReadModel,
+  runCrmCustomersProjection,
+  runGlBalanceProjection,
+  runMarketOrdersProjection,
+  runOrdersProjection,
+  runProductProjection,
+  runPosSalesProjection,
+  runSalesReportProjection,
+  runStockBalanceProjection
+} from './projections.js';
 import { auditLogMiddleware, rateLimitByRole } from './security.js';
 import { executeSqlWrite } from './sql-write-adapter.js';
-import { verifyAnchor, verifyChain, verifySeals, verifySnapshot } from './verification.js';
+import { buildEventSigningObject, verifyAnchor, verifyChain, verifySeals, verifySnapshot } from './verification.js';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -81,33 +95,136 @@ app.post('/v1/snapshots/:chainId/build', rateLimitByRole('ops'), requireApiRole(
 });
 
 app.post('/v1/chains/:chainId/events', rateLimitByRole('ingest'), requireApiRole('ingest'), async (req, res) => {
-  const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
+  const incomingNamespace = req.body?.namespace && typeof req.body.namespace === 'object' ? req.body.namespace : {};
+  const namespaceId = req.body?.namespace_id || incomingNamespace.tenantid || config.defaultNamespaceId;
   const chainId = req.params.chainId;
+
+  const payload = req.body?.payload && typeof req.body.payload === 'object' ? req.body.payload : {};
+  const payloadEntity = payload.entity && typeof payload.entity === 'object' ? payload.entity : {};
+  const payloadTenant = payload.tenant && typeof payload.tenant === 'object' ? payload.tenant : {};
+
+  const incomingEventType =
+    (typeof req.body?.event_type === 'string' && req.body.event_type.trim()) ||
+    (typeof req.body?.type === 'string' && req.body.type.trim()) ||
+    '';
+  const eventTypeSpec = getEventTypeSpec(incomingEventType);
+  if (!eventTypeSpec) {
+    return res.status(422).json({
+      status: 'FAIL',
+      error_code: 'EVENT_TYPE_NOT_REGISTERED',
+      message: 'event_type is not registered',
+      checked_scope: { event_type: incomingEventType }
+    });
+  }
+
+  const incomingVersion = req.body?.version === undefined ? eventTypeSpec.version : Number(req.body.version);
+  if (!Number.isInteger(incomingVersion) || incomingVersion !== eventTypeSpec.version) {
+    return res.status(422).json({
+      status: 'FAIL',
+      error_code: 'EVENT_TYPE_VERSION_INVALID',
+      message: 'event version does not match registry',
+      checked_scope: {
+        event_type: incomingEventType,
+        expected_version: eventTypeSpec.version,
+        received_version: req.body?.version
+      }
+    });
+  }
+
+  const payloadValidation = validatePayloadForEventType(incomingEventType, payload);
+  if (!payloadValidation.ok) {
+    return res.status(422).json({
+      status: 'FAIL',
+      error_code: payloadValidation.error_code,
+      message: payloadValidation.message,
+      checked_scope: payloadValidation.detail
+    });
+  }
+
+  const incomingDomain = typeof req.body?.domain === 'string' ? req.body.domain.trim() : eventTypeSpec.domain;
+  const derivedDomain = incomingDomain || (incomingEventType.includes('.') ? incomingEventType.split('.')[0] : '') || 'legacy';
+
+  const requestedSequence = Number(req.body?.sequence);
+  const hasRequestedSequence = Number.isInteger(requestedSequence) && requestedSequence > 0;
+
+  let sequence = hasRequestedSequence ? requestedSequence : 0;
+  let prevHash = typeof req.body?.prev_hash === 'string' && req.body.prev_hash ? req.body.prev_hash : '';
+
+  if (!hasRequestedSequence || !prevHash) {
+    const { rows } = await query(
+      `select namespace_id, chain_id, event_id, sequence, prev_hash, account_id, event_type, event_time, payload
+       from eventdb_event
+       where namespace_id = $1 and chain_id = $2
+       order by sequence desc
+       limit 1`,
+      [namespaceId, chainId]
+    );
+
+    const lastEvent = rows[0] || null;
+
+    if (lastEvent) {
+      if (!hasRequestedSequence) {
+        sequence = Number(lastEvent.sequence) + 1;
+      }
+      if (!prevHash) {
+        prevHash = hashCanonicalObject(buildEventSigningObject(lastEvent));
+      }
+    } else {
+      if (!hasRequestedSequence) {
+        sequence = 1;
+      }
+      if (!prevHash) {
+        prevHash = config.eventGenesisPrevHash;
+      }
+    }
+  }
 
   const event = {
     namespace_id: namespaceId,
     chain_id: chainId,
-    event_id: req.body?.event_id,
-    sequence: Number(req.body?.sequence),
-    prev_hash: req.body?.prev_hash,
-    account_id: req.body?.account_id,
-    event_type: req.body?.event_type,
-    event_time: req.body?.event_time,
-    payload: req.body?.payload,
+    event_id: req.body?.event_id || req.body?.eventid,
+    sequence,
+    prev_hash: prevHash,
+    account_id: req.body?.account_id || incomingNamespace.accountid || req.body?.actorid,
+    event_type: incomingEventType,
+    domain: derivedDomain,
+    entity_type:
+      (typeof req.body?.entity_type === 'string' && req.body.entity_type) ||
+      (typeof payloadEntity.type === 'string' && payloadEntity.type) ||
+      eventTypeSpec.entity,
+    entity_id:
+      (typeof req.body?.entity_id === 'string' && req.body.entity_id) ||
+      (typeof payloadEntity.id === 'string' && payloadEntity.id) ||
+      (typeof payload[`${eventTypeSpec.entity}Id`] === 'string' && payload[`${eventTypeSpec.entity}Id`]) ||
+      null,
+    tenant_id:
+      (typeof req.body?.tenant_id === 'string' && req.body.tenant_id) ||
+      (typeof incomingNamespace.tenantid === 'string' && incomingNamespace.tenantid) ||
+      (typeof payloadTenant.tenantId === 'string' && payloadTenant.tenantId) ||
+      null,
+    store_id:
+      (typeof req.body?.store_id === 'string' && req.body.store_id) ||
+      (typeof incomingNamespace.branchid === 'string' && incomingNamespace.branchid) ||
+      (typeof payloadTenant.storeId === 'string' && payloadTenant.storeId) ||
+      null,
+    outlet_id:
+      (typeof req.body?.outlet_id === 'string' && req.body.outlet_id) ||
+      (typeof payloadTenant.outletId === 'string' && payloadTenant.outletId) ||
+      null,
+    event_time: req.body?.event_time || req.body?.occurred_at,
+    payload,
     signature: req.body?.signature
   };
 
-  const eventHash = hashCanonicalObject({
-    namespace_id: event.namespace_id,
-    chain_id: event.chain_id,
-    event_id: event.event_id,
-    sequence: event.sequence,
-    prev_hash: event.prev_hash,
-    account_id: event.account_id,
-    event_type: event.event_type,
-    event_time: event.event_time,
-    payload: event.payload
-  });
+  const eventHash = hashCanonicalObject(buildEventSigningObject(event));
+  if (typeof req.body?.hash === 'string' && req.body.hash && req.body.hash !== eventHash) {
+    return res.status(422).json({
+      status: 'FAIL',
+      error_code: 'EVENT_HASH_INVALID',
+      message: 'hash does not match canonical event hash',
+      checked_scope: { event_type: incomingEventType, event_id: event.event_id }
+    });
+  }
 
   try {
     await query(
@@ -120,8 +237,9 @@ app.post('/v1/chains/:chainId/events', rateLimitByRole('ingest'), requireApiRole
     await query(
       `insert into eventdb_event (
         namespace_id, chain_id, event_id, sequence, prev_hash,
-        account_id, event_type, event_time, payload, signature
-      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        account_id, event_type, domain, entity_type, entity_id,
+        tenant_id, store_id, outlet_id, event_time, payload, signature
+      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
       [
         event.namespace_id,
         event.chain_id,
@@ -130,6 +248,12 @@ app.post('/v1/chains/:chainId/events', rateLimitByRole('ingest'), requireApiRole
         event.prev_hash,
         event.account_id,
         event.event_type,
+        event.domain,
+        event.entity_type,
+        event.entity_id,
+        event.tenant_id,
+        event.store_id,
+        event.outlet_id,
         event.event_time,
         event.payload,
         event.signature
@@ -158,6 +282,76 @@ app.post('/v1/projections/:chainId/orders/run', rateLimitByRole('ops'), requireA
   res.status(result.status === 'PASS' ? 200 : 422).json(result);
 });
 
+app.post('/v1/projections/:chainId/market-orders/run', rateLimitByRole('ops'), requireApiRole('ops'), async (req, res) => {
+  const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
+  const result = await runMarketOrdersProjection({
+    namespaceId,
+    chainId: req.params.chainId,
+    uptoSequence: req.body?.upto_sequence
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
+});
+
+app.post('/v1/projections/:chainId/pos-sales/run', rateLimitByRole('ops'), requireApiRole('ops'), async (req, res) => {
+  const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
+  const result = await runPosSalesProjection({
+    namespaceId,
+    chainId: req.params.chainId,
+    uptoSequence: req.body?.upto_sequence
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
+});
+
+app.post('/v1/projections/:chainId/crm-customers/run', rateLimitByRole('ops'), requireApiRole('ops'), async (req, res) => {
+  const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
+  const result = await runCrmCustomersProjection({
+    namespaceId,
+    chainId: req.params.chainId,
+    uptoSequence: req.body?.upto_sequence
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
+});
+
+app.post('/v1/projections/:chainId/products/run', rateLimitByRole('ops'), requireApiRole('ops'), async (req, res) => {
+  const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
+  const result = await runProductProjection({
+    namespaceId,
+    chainId: req.params.chainId,
+    uptoSequence: req.body?.upto_sequence
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
+});
+
+app.post('/v1/projections/:chainId/stock-balances/run', rateLimitByRole('ops'), requireApiRole('ops'), async (req, res) => {
+  const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
+  const result = await runStockBalanceProjection({
+    namespaceId,
+    chainId: req.params.chainId,
+    uptoSequence: req.body?.upto_sequence
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
+});
+
+app.post('/v1/projections/:chainId/sales-report/run', rateLimitByRole('ops'), requireApiRole('ops'), async (req, res) => {
+  const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
+  const result = await runSalesReportProjection({
+    namespaceId,
+    chainId: req.params.chainId,
+    uptoSequence: req.body?.upto_sequence
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
+});
+
+app.post('/v1/projections/:chainId/gl-balances/run', rateLimitByRole('ops'), requireApiRole('ops'), async (req, res) => {
+  const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
+  const result = await runGlBalanceProjection({
+    namespaceId,
+    chainId: req.params.chainId,
+    uptoSequence: req.body?.upto_sequence
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
+});
+
 app.post('/v1/sql/:chainId/write', rateLimitByRole('ingest'), requireApiRole('ingest'), async (req, res) => {
   const namespaceId = req.body?.namespace_id || config.defaultNamespaceId;
   const idempotencyKey = req.header('idempotency-key') || req.body?.idempotency_key || '';
@@ -178,6 +372,38 @@ app.get('/v1/read/orders/:chainId', rateLimitByRole('verify'), requireApiRole('v
     namespaceId,
     chainId: req.params.chainId,
     status: req.query?.status || '',
+    limit: req.query?.limit
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
+});
+
+app.get('/v1/read/market-orders/:chainId', rateLimitByRole('verify'), requireApiRole('verify'), async (req, res) => {
+  const namespaceId = req.query?.namespace_id || config.defaultNamespaceId;
+  const result = await queryMarketOrdersReadModel({
+    namespaceId,
+    chainId: req.params.chainId,
+    status: req.query?.status || '',
+    orderId: req.query?.order_id || '',
+    limit: req.query?.limit
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
+});
+
+app.get('/v1/read/pos-sales/:chainId', rateLimitByRole('verify'), requireApiRole('verify'), async (req, res) => {
+  const namespaceId = req.query?.namespace_id || config.defaultNamespaceId;
+  const result = await queryPosSalesReadModel({
+    namespaceId,
+    chainId: req.params.chainId,
+    limit: req.query?.limit
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
+});
+
+app.get('/v1/read/crm-customers/:chainId', rateLimitByRole('verify'), requireApiRole('verify'), async (req, res) => {
+  const namespaceId = req.query?.namespace_id || config.defaultNamespaceId;
+  const result = await queryCrmCustomersReadModel({
+    namespaceId,
+    chainId: req.params.chainId,
     limit: req.query?.limit
   });
   res.status(result.status === 'PASS' ? 200 : 422).json(result);
