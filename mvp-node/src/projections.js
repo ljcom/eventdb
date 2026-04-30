@@ -14,49 +14,28 @@ const ORDERS_PROJECTION = {
 const MARKET_ORDERS_PROJECTION = {
   projectionName: 'market_orders',
   projectionVer: 1,
-  logicChecksum: 'market-orders-v1-state',
+  logicChecksum: 'market-orders-v1-registry',
   rebuildStrategy: 'full_rebuild',
   migrationPolicy: 'replay_only',
-  trackedEventTypes: new Set([
-    'market.order.created',
-    'market.order.paid',
-    'market.order.packed',
-    'market.order.shipped',
-    'market.order.delivered',
-    'market.order.cancelled'
-  ])
+  trackedEventTypes: getEventTypesForProjection('market_orders')
 };
 
 const POS_SALES_PROJECTION = {
   projectionName: 'pos_sales',
   projectionVer: 1,
-  logicChecksum: 'pos-sales-v1-state',
+  logicChecksum: 'pos-sales-v1-registry',
   rebuildStrategy: 'full_rebuild',
   migrationPolicy: 'replay_only',
-  trackedEventTypes: new Set([
-    'pos.sale.created',
-    'pos.sale.completed',
-    'pos.sale.voided',
-    'pos.receipt.issued',
-    'pos.shift.opened',
-    'pos.shift.closed'
-  ])
+  trackedEventTypes: getEventTypesForProjection('pos_sales')
 };
 
 const CRM_CUSTOMERS_PROJECTION = {
   projectionName: 'crm_customers',
   projectionVer: 1,
-  logicChecksum: 'crm-customers-v1-state',
+  logicChecksum: 'crm-customers-v1-registry',
   rebuildStrategy: 'full_rebuild',
   migrationPolicy: 'replay_only',
-  trackedEventTypes: new Set([
-    'crm.lead.created',
-    'crm.customer.created',
-    'crm.customer.updated',
-    'crm.activity.logged',
-    'crm.followup.scheduled',
-    'crm.deal.closed'
-  ])
+  trackedEventTypes: getEventTypesForProjection('crm_customers')
 };
 
 const PRODUCT_PROJECTION = {
@@ -1283,6 +1262,160 @@ export async function queryMarketOrdersReadModel({ namespaceId, chainId, status,
         limit: safeLimit,
         checkpoint
       }
+    );
+  });
+}
+
+export async function queryProductsReadModel({ namespaceId, chainId, productId, limit }) {
+  const ns = namespaceId || config.defaultNamespaceId;
+  const maxLimit = 1000;
+  const safeLimit = Number.isInteger(Number(limit)) && Number(limit) > 0 ? Math.min(Number(limit), maxLimit) : 100;
+
+  const values = [ns, chainId];
+  let sql = `select namespace_id, chain_id, product_id, name, sku, unit, updated_at,
+                    source_event_id, source_sequence, projection_ver, tenant_id
+             from read.products_v1
+             where namespace_id = $1 and chain_id = $2`;
+
+  if (productId) {
+    values.push(productId);
+    sql += ` and product_id = $${values.length}`;
+  }
+
+  values.push(safeLimit);
+  sql += ` order by updated_at desc, product_id asc limit $${values.length}`;
+
+  return withTx(async (client) => {
+    const { rows } = await client.query(sql, values);
+    const checkpoint = await readCheckpoint(client, { namespaceId: ns, chainId, projection: PRODUCT_PROJECTION });
+
+    return pass(
+      'Products read model query completed',
+      {
+        namespace_id: ns,
+        chain_id: chainId,
+        projection_name: PRODUCT_PROJECTION.projectionName,
+        projection_ver: PRODUCT_PROJECTION.projectionVer
+      },
+      { rows, limit: safeLimit, checkpoint }
+    );
+  });
+}
+
+export async function queryStockBalancesReadModel({ namespaceId, chainId, productId, locationId, limit }) {
+  const ns = namespaceId || config.defaultNamespaceId;
+  const maxLimit = 1000;
+  const safeLimit = Number.isInteger(Number(limit)) && Number(limit) > 0 ? Math.min(Number(limit), maxLimit) : 100;
+
+  const values = [ns, chainId];
+  let sql = `select namespace_id, chain_id, location_id, product_id, quantity, updated_at,
+                    source_event_id, source_sequence, projection_ver, tenant_id
+             from read.stock_balances_v1
+             where namespace_id = $1 and chain_id = $2`;
+
+  if (productId) {
+    values.push(productId);
+    sql += ` and product_id = $${values.length}`;
+  }
+
+  if (locationId) {
+    values.push(locationId);
+    sql += ` and location_id = $${values.length}`;
+  }
+
+  values.push(safeLimit);
+  sql += ` order by updated_at desc, location_id asc, product_id asc limit $${values.length}`;
+
+  return withTx(async (client) => {
+    const { rows } = await client.query(sql, values);
+    const checkpoint = await readCheckpoint(client, { namespaceId: ns, chainId, projection: STOCK_BALANCE_PROJECTION });
+
+    return pass(
+      'Stock balances read model query completed',
+      {
+        namespace_id: ns,
+        chain_id: chainId,
+        projection_name: STOCK_BALANCE_PROJECTION.projectionName,
+        projection_ver: STOCK_BALANCE_PROJECTION.projectionVer
+      },
+      { rows, limit: safeLimit, checkpoint }
+    );
+  });
+}
+
+export async function querySalesReportReadModel({ namespaceId, chainId, reportKey, limit }) {
+  const ns = namespaceId || config.defaultNamespaceId;
+  const maxLimit = 1000;
+  const safeLimit = Number.isInteger(Number(limit)) && Number(limit) > 0 ? Math.min(Number(limit), maxLimit) : 100;
+
+  const values = [ns, chainId];
+  let sql = `select namespace_id, chain_id, report_key, order_count, invoice_count, amount_total,
+                    updated_at, source_event_id, source_sequence, projection_ver, tenant_id
+             from read.sales_report_v1
+             where namespace_id = $1 and chain_id = $2`;
+
+  if (reportKey) {
+    values.push(reportKey);
+    sql += ` and report_key = $${values.length}`;
+  }
+
+  values.push(safeLimit);
+  sql += ` order by report_key desc limit $${values.length}`;
+
+  return withTx(async (client) => {
+    const { rows } = await client.query(sql, values);
+    const checkpoint = await readCheckpoint(client, { namespaceId: ns, chainId, projection: SALES_REPORT_PROJECTION });
+
+    return pass(
+      'Sales report read model query completed',
+      {
+        namespace_id: ns,
+        chain_id: chainId,
+        projection_name: SALES_REPORT_PROJECTION.projectionName,
+        projection_ver: SALES_REPORT_PROJECTION.projectionVer
+      },
+      { rows, limit: safeLimit, checkpoint }
+    );
+  });
+}
+
+export async function queryGlBalancesReadModel({ namespaceId, chainId, accountId, period, limit }) {
+  const ns = namespaceId || config.defaultNamespaceId;
+  const maxLimit = 1000;
+  const safeLimit = Number.isInteger(Number(limit)) && Number(limit) > 0 ? Math.min(Number(limit), maxLimit) : 100;
+
+  const values = [ns, chainId];
+  let sql = `select namespace_id, chain_id, account_id, period, debit_total, credit_total,
+                    updated_at, source_event_id, source_sequence, projection_ver, tenant_id
+             from read.gl_balances_v1
+             where namespace_id = $1 and chain_id = $2`;
+
+  if (accountId) {
+    values.push(accountId);
+    sql += ` and account_id = $${values.length}`;
+  }
+
+  if (period) {
+    values.push(period);
+    sql += ` and period = $${values.length}`;
+  }
+
+  values.push(safeLimit);
+  sql += ` order by period desc, account_id asc limit $${values.length}`;
+
+  return withTx(async (client) => {
+    const { rows } = await client.query(sql, values);
+    const checkpoint = await readCheckpoint(client, { namespaceId: ns, chainId, projection: GL_BALANCE_PROJECTION });
+
+    return pass(
+      'GL balances read model query completed',
+      {
+        namespace_id: ns,
+        chain_id: chainId,
+        projection_name: GL_BALANCE_PROJECTION.projectionName,
+        projection_ver: GL_BALANCE_PROJECTION.projectionVer
+      },
+      { rows, limit: safeLimit, checkpoint }
     );
   });
 }

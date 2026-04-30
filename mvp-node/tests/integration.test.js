@@ -245,6 +245,15 @@ test('integration: event -> seal -> snapshot -> verify -> tamper', async () => {
     assert.equal(productRows.length, 1);
     assert.equal(productRows[0].name, 'Product 1');
 
+    const readProducts = await requestJson(
+      `${baseUrl}/v1/read/products/${chainId}?namespace_id=${namespaceId}&product_id=P-1&limit=10`,
+      { method: 'GET' }
+    );
+    assert.equal(readProducts.status, 200);
+    assert.equal(readProducts.payload.status, 'PASS');
+    assert.equal(readProducts.payload.artifact.rows.length, 1);
+    assert.equal(readProducts.payload.artifact.rows[0].product_id, 'P-1');
+
     const projectionRun = await requestJson(`${baseUrl}/v1/projections/${chainId}/orders/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

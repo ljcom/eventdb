@@ -155,11 +155,29 @@ components:
         - sales.order.updated
         - sales.order.cancelled
         - sales.order.deleted
+        - market.order.created
+        - market.order.paid
+        - market.order.packed
+        - market.order.shipped
+        - market.order.delivered
+        - market.order.cancelled
         - sales.invoice.created
         - stock.movement.created
         - finance.bill.created
         - accounting.journal.posted
         - hr.payroll.generated
+        - pos.sale.created
+        - pos.sale.completed
+        - pos.sale.voided
+        - pos.receipt.issued
+        - pos.shift.opened
+        - pos.shift.closed
+        - crm.lead.created
+        - crm.customer.created
+        - crm.customer.updated
+        - crm.activity.logged
+        - crm.followup.scheduled
+        - crm.deal.closed
 
     EventNamespace:
       type: object

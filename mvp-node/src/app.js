@@ -7,9 +7,13 @@ import { buildSeal, buildSnapshot } from './builders.js';
 import { getEventTypeSpec, validatePayloadForEventType } from './event-types.js';
 import {
   queryCrmCustomersReadModel,
+  queryGlBalancesReadModel,
   queryMarketOrdersReadModel,
   queryOrdersReadModel,
   queryPosSalesReadModel,
+  queryProductsReadModel,
+  querySalesReportReadModel,
+  queryStockBalancesReadModel,
   runCrmCustomersProjection,
   runGlBalanceProjection,
   runMarketOrdersProjection,
@@ -404,6 +408,52 @@ app.get('/v1/read/crm-customers/:chainId', rateLimitByRole('verify'), requireApi
   const result = await queryCrmCustomersReadModel({
     namespaceId,
     chainId: req.params.chainId,
+    limit: req.query?.limit
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
+});
+
+app.get('/v1/read/products/:chainId', rateLimitByRole('verify'), requireApiRole('verify'), async (req, res) => {
+  const namespaceId = req.query?.namespace_id || config.defaultNamespaceId;
+  const result = await queryProductsReadModel({
+    namespaceId,
+    chainId: req.params.chainId,
+    productId: req.query?.product_id || '',
+    limit: req.query?.limit
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
+});
+
+app.get('/v1/read/stock-balances/:chainId', rateLimitByRole('verify'), requireApiRole('verify'), async (req, res) => {
+  const namespaceId = req.query?.namespace_id || config.defaultNamespaceId;
+  const result = await queryStockBalancesReadModel({
+    namespaceId,
+    chainId: req.params.chainId,
+    productId: req.query?.product_id || '',
+    locationId: req.query?.location_id || '',
+    limit: req.query?.limit
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
+});
+
+app.get('/v1/read/sales-report/:chainId', rateLimitByRole('verify'), requireApiRole('verify'), async (req, res) => {
+  const namespaceId = req.query?.namespace_id || config.defaultNamespaceId;
+  const result = await querySalesReportReadModel({
+    namespaceId,
+    chainId: req.params.chainId,
+    reportKey: req.query?.report_key || '',
+    limit: req.query?.limit
+  });
+  res.status(result.status === 'PASS' ? 200 : 422).json(result);
+});
+
+app.get('/v1/read/gl-balances/:chainId', rateLimitByRole('verify'), requireApiRole('verify'), async (req, res) => {
+  const namespaceId = req.query?.namespace_id || config.defaultNamespaceId;
+  const result = await queryGlBalancesReadModel({
+    namespaceId,
+    chainId: req.params.chainId,
+    accountId: req.query?.account_id || '',
+    period: req.query?.period || '',
     limit: req.query?.limit
   });
   res.status(result.status === 'PASS' ? 200 : 422).json(result);
