@@ -5,13 +5,13 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: eventdb_core
+      POSTGRES_DB: eventdb_nitinoto
     ports:
       - "5432:5432"
     volumes:
       - eventdb_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d eventdb_core"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d eventdb_nitinoto"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -27,7 +27,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/eventdb_core
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/eventdb_nitinoto
       DB_SSL: "false"
       DEFAULT_NAMESPACE_ID: default
       EVENT_GENESIS_PREV_HASH: GENESIS
